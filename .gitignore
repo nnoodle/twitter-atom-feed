@@ -1,2 +1,3 @@
 /twitter-atom-feed
 *.xml
+*.fasl

@@ -4,10 +4,14 @@
 (defparameter +urn+ "urn:tag:twitter-atom-feed,2020"
   "Universal Resource Name for Atom feed.")
 
+(defparameter +default-count+ 200
+  "Default number of tweets to fetch.")
+
 (defvar *acceptor* nil
   "Hunchentoot acceptor.")
 
 (eval-when (:compile-toplevel :load-toplevel :execute) ; doesn't work without this part
+  (pushnew :outline who:*html-empty-tags*)
   (setf who:*escape-char-p* (lambda (char) (find char "<>&'\""))
         who:*attribute-quote-char* #\"
         who:*html-no-indent-tags* (append '(:id :title :updated :name :uri) cl-who:*html-no-indent-tags*)))
@@ -75,8 +79,8 @@
     (if (or (null init-count) (<= init-count 200))
         (apply timeline-fn args)
         (loop :for count :from (- init-count 200) :downto 1 :by 200
-              :with init = (apply timeline-fn :count 200 countless-args)
-              :with cur = init
+              :with init := (apply timeline-fn :count 200 countless-args)
+              :with cur := init
               :if (null cur)
                 :do (loop-finish)
               :else
@@ -88,23 +92,32 @@
                 :into acc
               :finally (return (nconc init acc))))))
 
-(defmacro write-atom-feed-string (tweet-form)
+(defmacro get-tweets (tweet-form &optional filters)
+  "Wrap around tweet-form to get more than 200 tweets, filtered by FILTERS"
+  (let ((tweets `(get-many-tweets #',(first tweet-form) ,@(rest tweet-form))))
+    (if (null filters)
+        tweets
+        (let ((v (gensym))
+              (f (gensym)))
+          `(remove-if-not
+            (lambda (,v)
+              (loop :for ,f :in ,filters
+                    :unless (funcall ,f ,v)
+                      :do (return nil)
+                    :finally (return t)))
+            ,tweets)))))
+
+(defun write-atom-feed-string (tweets user)
   "Wrap tweet-form around atom string writer."
-  (let ((stream (gensym))
-        (args (rest tweet-form)))
-    `(with-output-to-string (,stream)
-       (write-atom-feed
-        (get-many-tweets #',(first tweet-form) ,@args)
-        :stream ,stream
-        :user ,(cond ((getf args :user-id)
-                      `(chirp:users/show :user-id ,(getf args :user-id)))
-                     ((getf args :screen-name)
-                      `(chirp:users/show :screen-name ,(getf args :screen-name)))
-                     (t nil))))))
+  (with-output-to-string (stream)
+    (write-atom-feed
+     tweets
+     :stream stream
+     :user user)))
 
 (defun @oauth-err (next)
   (handler-case (funcall next)
-    (chirp-objects:oauth-request-error (err)
+    (chirp:oauth-request-error (err)
       (setf (hunchentoot:return-code*) (chirp:http-status err))
       (setf (hunchentoot:content-type*) "text/plain")
       (format nil "~s~%" (chirp:http-body err)))))
@@ -113,25 +126,34 @@
   (setf (hunchentoot:content-type*) "application/atom+xml")
   (funcall next))
 
-(easy-routes:defroute home-route ("/home"
-                                  :method :get
-                                  :decorators (@oauth-err @atom)) ()
-  (write-atom-feed-string (chirp:statuses/home-timeline
-                           :count 1000 :tweet-mode "extended")))
+(easy-routes:defroute home-route
+    ("/home" :decorators (@oauth-err @atom))
+    (imagep (count :init-form +default-count+ :parameter-type 'integer))
+  (write-atom-feed-string
+   (get-tweets (chirp:statuses/home-timeline
+                :count count :tweet-mode "extended")
+               (if imagep (list #'chirp:extended-entities) nil))
+   nil))
 
-(easy-routes:defroute user-id-route ("/user/id/:id"
-                                     :method :get
-                                     :decorators (@oauth-err @atom)) ()
-  (write-atom-feed-string (chirp:statuses/user-timeline
-                           :user-id id :count 1000 :tweet-mode "extended")))
+(easy-routes:defroute user-id-route
+    ("/user/id/:id" :decorators (@oauth-err @atom))
+    (imagep (count :init-form +default-count+ :parameter-type 'integer) &path (id 'integer))
+  (write-atom-feed-string
+   (get-tweets (chirp:statuses/user-timeline
+                :user-id id :count count :tweet-mode "extended")
+               (if imagep (list #'chirp:extended-entities) nil))
+   (chirp:users/show :user-id id)))
 
-(easy-routes:defroute user-name-route ("/user/name/:screen-name"
-                                       :method :get
-                                       :decorators (@oauth-err @atom)) ()
-  (write-atom-feed-string (chirp:statuses/user-timeline
-                           :screen-name screen-name :count 1000 :tweet-mode "extended")))
+(easy-routes:defroute user-name-route
+    ("/user/name/:screen-name" :decorators (@oauth-err @atom))
+    (imagep (count :init-form +default-count+ :parameter-type 'integer))
+  (write-atom-feed-string
+   (get-tweets (chirp:statuses/user-timeline
+                :screen-name screen-name :count count :tweet-mode "extended")
+               (if imagep (list #'chirp:extended-entities) nil))
+   (chirp:users/show :screen-name screen-name)))
 
-(easy-routes:defroute favicon-route ("/favicon.ico" :method :get) ()
+(easy-routes:defroute favicon-route ("/favicon.ico") ()
   (hunchentoot:redirect "https://abs.twimg.com/favicons/twitter.ico"))
 
 (defun start (address port)

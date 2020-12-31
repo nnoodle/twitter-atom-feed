@@ -50,7 +50,10 @@
    :long "port"
    :arg-parser #'parse-integer
    :meta-var "PORT"
-   :default 8080))
+   :default 8080)
+  (:name :opml
+   :description "Print friends list in OPML format"
+   :long "opml"))
 
 (defun opts-describe-and-exit (&optional (exit-code 0))
   "Show command usage and exit with EXIT-CODE."
@@ -71,23 +74,47 @@
                   (opts:raw-arg condition)
                   (opts:option condition))
           (opts:exit 2)))
-    (when (getf opts :help)
-      (opts-describe-and-exit))
-    (handler-case (bt:join-thread
-                   (hunchentoot::acceptor-process
-                    (hunchentoot::acceptor-taskmaster
-                     (start (getf opts :bind) (getf opts :port)))))
-      (#+sbcl sb-sys:interactive-interrupt
-       #+ccl  ccl:interrupt-signal-condition
-       #+clisp system::simple-interrupt-condition
-       #+ecl ext:interactive-interrupt
-       #+allegro excl:interrupt-signal ()
-        (opts:exit 0))
-      (error (err)
-        (format t "something happened: ~&~s~&" err)
-        (opts:exit 1)))))
+    (cond ((getf opts :help) (opts-describe-and-exit))
+          ((getf opts :opml)
+           (export-opml
+            :address (getf opts :bind)
+            :port (getf opts :port))
+           (opts:exit 0))
+          (t (handler-case (bt:join-thread
+                            (hunchentoot::acceptor-process
+                             (hunchentoot::acceptor-taskmaster
+                              (start (getf opts :bind) (getf opts :port)))))
+               (#+sbcl sb-sys:interactive-interrupt
+                #+ccl ccl:interrupt-signal-condition
+                #+clisp system::simple-interrupt-condition
+                #+ecl ext:interactive-interrupt
+                #+allegro excl:interrupt-signal ()
+                 (opts:exit 0))
+               (error (err)
+                 (format t "something happened: ~&~s~&" err)
+                 (opts:exit 1)))))))
 
 (defun start (&optional (address "localhost") (port 8080))
   "Start atom feed server."
   (authenticate)
   (twitter-atom-feed.server:start address port))
+
+(defun export-opml (&key (address "localhost") (port 8080) (stream *standard-output*))
+  "Export friends (accounts the user follows) list to stream"
+  (let ((user (authenticate)))
+    (who:with-html-output (stream nil :indent t :prologue "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+      ((:opml :version "1.0")
+       (:head (:title "Twitter Friends List"))
+       (:body
+        ((:outline :title "Twitter Friends List"
+                   :text "Twitter Friends List")
+         (loop :for friend :in (chirp:friends/list :user-id (chirp:id user)) :do
+           (who:htm
+            (:outline
+             :type "rss"
+             :version "Atom"
+             :|xmlUrl| (format nil "http://~a:~a/user/id/~a" address port (chirp:id friend))
+             :|htmlUrl| (format nil "https://twitter.com/~a" (chirp:screen-name friend))
+             :title (chirp:name friend)
+             :text (chirp:name friend))))))))
+    (fresh-line stream)))
