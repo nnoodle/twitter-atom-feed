@@ -23,6 +23,12 @@
         (concatenate 'string (subseq text 0 to-length) "…")
         text)))
 
+(defun real-tweet (tweet)
+  "The retweeded tweet if it is a retweet."
+  (if (chirp:retweet-p tweet)
+      (chirp:retweeted-status tweet)
+      tweet))
+
 (defun write-atom-feed (tweets &key (stream *standard-output*) user)
   "Write an atom feed of all tweets to output."
   (let ((feed-id (format nil "~a:~a" +urn+ (if user (chirp:id user) "home")))
@@ -38,7 +44,7 @@
        (:author
         (:name (who:esc author-name))
         (:uri (who:esc author-uri)))
-       (loop :for tweet :in tweets :do
+       (loop :for tweet :in (mapcar #'real-tweet tweets) :do
          (who:htm
           (:entry
            (:id (who:fmt "~a:~a" +urn+ (chirp:id tweet)))
@@ -158,6 +164,10 @@
 
 (defun start (address port)
   "Starts Atom feed web server at http://ADDRESS:PORT"
-  (setf *acceptor* (hunchentoot:start (make-instance 'easy-routes:routes-acceptor
-                                                     :address address
-                                                     :port port))))
+  (setf *acceptor* (hunchentoot:start
+                    (make-instance
+                     'easy-routes:routes-acceptor
+                     :address address
+                     :port port
+                     ;; simultaneous Twitter API calls will fail about half the time.
+                     :taskmaster (make-instance 'hunchentoot:single-threaded-taskmaster)))))
