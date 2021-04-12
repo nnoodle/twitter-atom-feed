@@ -12,9 +12,11 @@
 
   :serial t
   :depends-on (#:alexandria
+               #:split-sequence #:memoize
                #:chirp #:unix-opts #:hunchentoot
                #:easy-routes #:cl-who #:cl-ppcre)
   :components ((:file "package")
-               (:file "files")
+               (:file "config")
                (:file "server")
+               (:file "filters")
                (:file "twitter-atom-feed")))

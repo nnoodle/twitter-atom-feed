@@ -1,7 +1,7 @@
-(in-package #:twitter-atom-feed.server)
 
-;; github uses tag:github.com,2008
-(defparameter +urn+ "urn:tag:twitter-atom-feed,2020"
+(in-package #:twitter-atom-feed)
+
+(defparameter +urn+ "urn:tag:twitter-atom-feed,2020" ; github uses tag:github.com,2008
   "Universal Resource Name for Atom feed.")
 
 (defparameter +default-count+ 200
@@ -10,7 +10,7 @@
 (defvar *acceptor* nil
   "Hunchentoot acceptor.")
 
-(eval-when (:compile-toplevel :load-toplevel :execute) ; doesn't work without this part
+(eval-when (:compile-toplevel :load-toplevel :execute)
   (pushnew :outline who:*html-empty-tags*)
   (setf who:*escape-char-p* (lambda (char) (find char "<>&'\""))
         who:*attribute-quote-char* #\"
@@ -65,6 +65,7 @@
             (when (chirp::extended-entities tweet)
               (who:htm
                (:p (loop :for img :in (cdar (chirp::extended-entities tweet))
+                         ;; expanded-url is wrong
                          :for photo :from 1 :to (length (cdar (chirp::extended-entities tweet)))
                          :do (who:htm
                               (:a :class "status-media"
@@ -98,28 +99,35 @@
                 :into acc
               :finally (return (nconc init acc))))))
 
-(defmacro get-tweets (tweet-form &optional filters)
-  "Wrap around tweet-form to get more than 200 tweets, filtered by FILTERS"
-  (let ((tweets `(get-many-tweets #',(first tweet-form) ,@(rest tweet-form))))
-    (if (null filters)
-        tweets
-        (let ((v (gensym))
-              (f (gensym)))
-          `(remove-if-not
-            (lambda (,v)
-              (loop :for ,f :in ,filters
-                    :unless (funcall ,f ,v)
-                      :do (return nil)
-                    :finally (return t)))
-            ,tweets)))))
-
-(defun write-atom-feed-string (tweets user)
-  "Wrap tweet-form around atom string writer."
-  (with-output-to-string (stream)
-    (write-atom-feed
-     tweets
-     :stream stream
-     :user user)))
+(def-memoized-function (compose-filters :test #'equalp) (filters)
+  "Compose together filters from the twitter-atom-feed-filters package into one function."
+  (let* ((filters (mapcar
+                   (lambda (s) (string-trim " " s))
+                   (delete-duplicates (split-sequence #\, filters :remove-empty-subseqs t)
+                                      :test #'string-equal)))
+         (symbols
+           (with-package-iterator (next-symbol '(#:twitter-atom-feed-filters) :internal :external)
+             (loop :with more? :and symbol
+                   :do (setf (values more? symbol) (next-symbol))
+                   :while more?
+                   :collect symbol)))
+         (filters (reduce
+                   (lambda (col symbol)
+                     (cond ((find (symbol-name symbol) filters :test #'string-equal)
+                            (cons (symbol-function symbol) col))
+                           ((find (concatenate 'string "-" (symbol-name symbol)) filters :test #'string-equal)
+                            (cons (complement (symbol-function symbol)) col))
+                           (t col)))
+                   (delete-duplicates symbols)
+                   :initial-value nil)))
+    (lambda (tweet)
+      (loop :for f :in filters
+            :unless (handler-case (funcall f tweet)
+                      (error (e)
+                        (format *error-output* "ERROR CALLING ~S ON TWEET ~S: ~A" f (chirp:id tweet) e)
+                        nil))
+              :do (return nil)
+            :finally (return t)))))
 
 (defun @oauth-err (next)
   (handler-case (funcall next)
@@ -132,37 +140,34 @@
   (setf (hunchentoot:content-type*) "application/atom+xml")
   (funcall next))
 
-(easy-routes:defroute home-route
-    ("/home" :decorators (@oauth-err @atom))
-    (imagep (count :init-form +default-count+ :parameter-type 'integer))
-  (write-atom-feed-string
-   (get-tweets (chirp:statuses/home-timeline
-                :count count :tweet-mode "extended")
-               (if imagep (list #'chirp:extended-entities) nil))
-   nil))
+(defmacro define-tweet-route (name path tweet-form &key user-form parameters)
+  "A very leaky macro."
+  `(easy-routes:defroute ,name
+       (,path :decorators (@oauth-err @atom))
+       (filters (count :init-form +default-count+ :parameter-type 'integer) ,@parameters)
+     (with-output-to-string (stream)
+       (write-atom-feed
+        (remove-if-not (compose-filters filters)
+                       (get-many-tweets #',(first tweet-form)
+                                        :count count
+                                        :tweet-mode "extended"
+                                        ,@(rest tweet-form)))
+        :stream stream
+        :user ,user-form))))
 
-(easy-routes:defroute user-id-route
-    ("/user/id/:id" :decorators (@oauth-err @atom))
-    (imagep (count :init-form +default-count+ :parameter-type 'integer) &path (id 'integer))
-  (write-atom-feed-string
-   (get-tweets (chirp:statuses/user-timeline
-                :user-id id :count count :tweet-mode "extended")
-               (if imagep (list #'chirp:extended-entities) nil))
-   (chirp:users/show :user-id id)))
-
-(easy-routes:defroute user-name-route
-    ("/user/name/:screen-name" :decorators (@oauth-err @atom))
-    (imagep (count :init-form +default-count+ :parameter-type 'integer))
-  (write-atom-feed-string
-   (get-tweets (chirp:statuses/user-timeline
-                :screen-name screen-name :count count :tweet-mode "extended")
-               (if imagep (list #'chirp:extended-entities) nil))
-   (chirp:users/show :screen-name screen-name)))
+(define-tweet-route home-route "/home" (chirp:statuses/home-timeline))
+(define-tweet-route user-id-route "/user/id/:id"
+  (chirp:statuses/user-timeline :user-id id)
+  :parameters (&path (id 'integer))
+  :user-form (chirp:users/show :user-id id))
+(define-tweet-route user-name-route "/user/name/:screen-name"
+  (chirp:statuses/user-timeline :screen-name screen-name)
+  :user-form (chirp:users/show :screen-name screen-name))
 
 (easy-routes:defroute favicon-route ("/favicon.ico") ()
   (hunchentoot:redirect "https://abs.twimg.com/favicons/twitter.ico"))
 
-(defun start (address port)
+(defun start-server (address port async)
   "Starts Atom feed web server at http://ADDRESS:PORT"
   (setf *acceptor* (hunchentoot:start
                     (make-instance
@@ -170,4 +175,8 @@
                      :address address
                      :port port
                      ;; simultaneous Twitter API calls will fail about half the time.
-                     :taskmaster (make-instance 'hunchentoot:single-threaded-taskmaster)))))
+                     ;; but async is nice during development.
+                     :taskmaster (make-instance
+                                  (if async
+                                      'hunchentoot:one-thread-per-connection-taskmaster
+                                      'hunchentoot:single-threaded-taskmaster))))))

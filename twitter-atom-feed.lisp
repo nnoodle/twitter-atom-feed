@@ -14,7 +14,7 @@
         (secret (prompt-string "Twitter API secret")))
     (format t "~a~%" (chirp:initiate-authentication :method :pin :api-key key :api-secret secret))
     (chirp:complete-authentication (prompt-string "PIN from URL"))
-    (twitter-atom-feed.files:write-data
+    (write-data
      :api-key chirp:*oauth-api-key*
      :api-secret chirp:*oauth-api-secret*
      :access-token chirp:*oauth-access-token*
@@ -22,10 +22,10 @@
 
 (defun authenticate ()
   "Authenticate Twitter API credentials."
-  (let ((plst (twitter-atom-feed.files:read-data)))
+  (let ((plst (read-data)))
     (when (null plst)
       (prompt-to-authenticate)
-      (setf plst (twitter-atom-feed.files:read-data)))
+      (setf plst (read-data)))
     (setf chirp:*oauth-api-key* (getf plst :api-key)
           chirp:*oauth-api-secret* (getf plst :api-secret)
           chirp:*oauth-access-token* (getf plst :access-token)
@@ -94,10 +94,11 @@
                  (format t "something happened: ~&~s~&" err)
                  (opts:exit 1)))))))
 
-(defun start (&optional (address "localhost") (port 8080))
+(defun start (&optional (address "localhost") (port 8080) async)
   "Start atom feed server."
+  (load-config)
   (authenticate)
-  (twitter-atom-feed.server:start address port))
+  (start-server address port async))
 
 (defun export-opml (&key (address "localhost") (port 8080) (stream *standard-output*))
   "Export friends (accounts the user follows) list to stream"

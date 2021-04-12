@@ -1,21 +1,21 @@
 
-(in-package #:twitter-atom-feed.files)
+(in-package #:twitter-atom-feed)
 
-(defvar *data* '()
+(defvar *xdg-data* '()
   "Data from (read-data)")
 
 (defun get-data ()
   "Get our data pathname"
   (uiop:xdg-config-home "twitter-atom-feed" "data.sexp"))
 
-;; (defun get-config ()
-;;   "Get our config pathname"
-;;   (uiop:xdg-config-home "twitter-atom-feed" "config.lisp"))
+(defun get-config ()
+  "Get our config pathname"
+  (uiop:xdg-config-home "twitter-atom-feed" "config.lisp"))
 
 (defun read-data ()
   "Read data from (get-data)"
-  (if (not (null *data*))
-      *data*
+  (if (not (null *xdg-data*))
+      *xdg-data*
       (progn
         (ensure-directories-exist (get-data))
         (with-open-file (dat (get-data)
@@ -46,3 +46,6 @@
                        :if-exists :overwrite
                        :if-does-not-exist :create)
     (write *data* :stream dat :pretty nil :readably t)))
+
+(defun load-config ()
+  (load (get-config) :if-does-not-exist nil))
