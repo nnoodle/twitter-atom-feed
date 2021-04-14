@@ -26,7 +26,7 @@ Run `./twitter-atom-feed --help` for more options.
 
 ### `config.lisp`
 Located in `$XDG_CONFIG_HOME/twitter-atom-feed/config.lisp`, you can
-define your own filters here.
+define your own filters here. Make sure it begins with `(in-package #:twitter-atom-feed-filters)`
 
 ## License
 Licensed under [ISC](./LICENSE)

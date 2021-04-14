@@ -32,67 +32,62 @@
           chirp:*oauth-access-secret* (getf plst :access-secret))
     (chirp:account/verify-credentials)))
 
-(opts:define-opts
-  (:name :help
-   :description "help"
-   :short #\h
-   :long "help")
-  (:name :bind
-   :description "Atom feed address"
-   :short #\b
-   :long "bind"
-   :arg-parser #'string
-   :meta-var "ADDRESS"
-   :default "localhost")
-  (:name :port
-   :description "Atom feed port"
-   :short #\p
-   :long "port"
-   :arg-parser #'parse-integer
-   :meta-var "PORT"
-   :default 8080)
-  (:name :opml
-   :description "Print friends list in OPML format"
-   :long "opml"))
-
-(defun opts-describe-and-exit (&optional (exit-code 0))
-  "Show command usage and exit with EXIT-CODE."
-  (opts:describe
-   :usage-of "twitter-atom-feed")
-  (opts:exit exit-code))
+(defparameter *ui*
+  (adopt:make-interface
+   :name "twitter-atom-feed"
+   :summary "Twitter Timeline → Atom Feed"
+   :usage "[-h|--help] [--opml] [-p|--port PORT] [-b|--bind ADDRESS]"
+   :help "Turn Twitter timelines into Atom feeds, hosted on http://ADDRESS:PORT"
+   :contents
+   (list (adopt:make-option 'help
+          :long "help"
+          :short #\h
+          :help "Display help information and exit."
+          :reduce (constantly t))
+         (adopt:make-option 'opml
+          :long "opml"
+          :help "Print friends list in OPML format and exit."
+          :reduce (constantly t))
+         (adopt:make-option 'bind
+          :parameter "ADDRESS"
+          :long "bind"
+          :short #\b
+          :help "Specify alternate bind address (default: \"localhost\")"
+          :initial-value "localhost"
+          :reduce #'adopt:last)
+         (adopt:make-option 'port
+          :parameter "PORT"
+          :long "port"
+          :short #\p
+          :help "Specify alternate port (default: 8080)"
+          :initial-value 8080
+          :reduce #'adopt:last
+          :key #'parse-integer))))
 
 (defun command-line ()
   "Command line entry point for twitter-atom-feed."
-  (multiple-value-bind (opts _free-args)
-      (handler-case (opts:get-opts)
-        (opts:unknown-option (condition)
-          (format t "fatal: unknown option ~s~%"
-                  (opts:option condition))
-          (opts-describe-and-exit 2))
-        (opts:arg-parser-failed (condition)
-          (format t "fatal: cannot parse ~s as argument of ~s~%"
-                  (opts:raw-arg condition)
-                  (opts:option condition))
-          (opts:exit 2)))
-    (cond ((getf opts :help) (opts-describe-and-exit))
-          ((getf opts :opml)
+  (multiple-value-bind (_free-args opts)
+      (handler-case (adopt:parse-options *ui*)
+        (error (c) (adopt:print-error-and-exit c)))
+    (cond ((gethash 'help opts) (adopt:print-help-and-exit *ui*))
+          ((gethash 'opml opts)
            (export-opml
-            :address (getf opts :bind)
-            :port (getf opts :port))
-           (opts:exit 0))
+            :address (gethash 'bind opts)
+            :port (gethash 'port opts))
+           (uiop:quit 0))
           (t (handler-case (bt:join-thread
                             (hunchentoot::acceptor-process
                              (hunchentoot::acceptor-taskmaster
-                              (start (getf opts :bind) (getf opts :port)))))
+                              (start (gethash 'bind opts) (gethash 'port opts)))))
                (#+sbcl sb-sys:interactive-interrupt
                 #+ccl ccl:interrupt-signal-condition
                 #+clisp system::simple-interrupt-condition
                 #+ecl ext:interactive-interrupt
                 #+allegro excl:interrupt-signal ()
-                 (opts:exit 0))
+                 (uiop:quit 0))
                (error (err)
                  (format t "something happened: ~&~s~&" err)
-                 (opts:exit 1)))))))
+                 (uiop:quit 1)))))))
 
 (defun start (&optional (address "localhost") (port 8080) async)
   "Start atom feed server."

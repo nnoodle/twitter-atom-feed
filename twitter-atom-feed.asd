@@ -2,9 +2,9 @@
 
 (asdf:defsystem #:twitter-atom-feed
   :description "Twitter timeline to Atom feed"
-  :author "Noodles! <nnoodle@chiru.no>"
+  :author "Noodles!"
   :license "ISC"
-  :version "0.0.1"
+  :version "0.3.0"
 
   :build-operation "program-op"
   :build-pathname "twitter-atom-feed"
@@ -13,7 +13,7 @@
   :serial t
   :depends-on (#:alexandria
                #:split-sequence #:memoize
-               #:chirp #:unix-opts #:hunchentoot
+               #:adopt #:chirp #:hunchentoot
                #:easy-routes #:cl-who #:cl-ppcre)
   :components ((:file "package")
                (:file "config")

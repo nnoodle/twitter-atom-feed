@@ -15,9 +15,9 @@
 (uiop:run-program
  (append (uiop:split-string "wget -w 1 -P")
          (list (uiop:native-namestring "~/Downloads/scraped/") "--")
-         (loop :for tweet :in (if (null (second (opts:argv)))
+         (loop :for tweet :in (if (null (second uiop:*command-line-arguments*))
                                   (chirp:statuses/home-timeline :count 200)
-                                  (chirp:statuses/user-timeline :screen-name (second (opts:argv))
+                                  (chirp:statuses/user-timeline :screen-name (second uiop:*command-line-arguments*)
                                                                 :count 200))
                :when (chirp::extended-entities tweet)
                  :append

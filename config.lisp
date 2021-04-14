@@ -1,3 +1,4 @@
+;;;; config.lisp
 
 (in-package #:twitter-atom-feed)
 
@@ -21,7 +22,7 @@
         (with-open-file (dat (get-data)
                              :direction :input
                              :if-does-not-exist :create)
-          (handler-case (setf *data* (read dat))
+          (handler-case (setf *xdg-data* (read dat))
             (end-of-file ()
               (with-open-file (dat (get-data)
                                    :direction :output
@@ -30,14 +31,14 @@
                 nil)))))))
 
 (defun set-data (&rest plist)
-  "Set plist values in *data*."
+  "Set plist values in *xdg-data*."
   (if (oddp (length plist))
       (error "PLIST not even ~s" plist)
       (loop :for (key val) :on plist :by #'cddr
-            :do (setf (getf *data* key) val))))
+            :do (setf (getf *xdg-data* key) val))))
 
 (defun write-data (&rest plist)
-  "Write *data* to file."
+  "Write *xdg-data* to file."
   (unless (null plist)
     (apply #'set-data plist))
   (ensure-directories-exist (get-data))
@@ -45,7 +46,7 @@
                        :direction :output
                        :if-exists :overwrite
                        :if-does-not-exist :create)
-    (write *data* :stream dat :pretty nil :readably t)))
+    (write *xdg-data* :stream dat :pretty nil :readably t)))
 
 (defun load-config ()
   (load (get-config) :if-does-not-exist nil))
