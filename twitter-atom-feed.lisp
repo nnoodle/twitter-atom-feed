@@ -64,8 +64,13 @@
           :reduce #'adopt:last
           :key #'parse-integer))))
 
+(defun exit-on-signal (signo)
+  (format *error-output* "~&received ~A~%" (trivial-signal:signal-name signo))
+  (uiop:quit 1))
+
 (defun command-line ()
   "Command line entry point for twitter-atom-feed."
+  (setf (trivial-signal:signal-handler :quit) #'exit-on-signal)
   (multiple-value-bind (_free-args opts)
       (handler-case (adopt:parse-options *ui*)
         (error (c) (adopt:print-error-and-exit c)))
@@ -75,19 +80,17 @@
             :address (gethash 'bind opts)
             :port (gethash 'port opts))
            (uiop:quit 0))
-          (t (handler-case (bt:join-thread
-                            (hunchentoot::acceptor-process
-                             (hunchentoot::acceptor-taskmaster
-                              (start (gethash 'bind opts) (gethash 'port opts)))))
-               (#+sbcl sb-sys:interactive-interrupt
-                #+ccl ccl:interrupt-signal-condition
-                #+clisp system::simple-interrupt-condition
-                #+ecl ext:interactive-interrupt
-                #+allegro excl:interrupt-signal ()
-                 (uiop:quit 0))
-               (error (err)
-                 (format t "something happened: ~&~s~&" err)
-                 (uiop:quit 1)))))))
+          (t (trivial-signal:signal-handler-bind
+                 ((3 #'exit-on-signal))
+               (handler-case (bt:join-thread
+                              (hunchentoot::acceptor-process
+                               (hunchentoot::acceptor-taskmaster
+                                (start (gethash 'bind opts) (gethash 'port opts)))))
+                 (usocket:unknown-error (_)
+                   (uiop:quit 0))
+                 (error (err)
+                   (format t "something happened: ~&~s~&" err)
+                   (uiop:quit 1))))))))
 
 (defun start (&optional (address "localhost") (port 8080) async)
   "Start atom feed server."
@@ -104,7 +107,7 @@
        (:body
         ((:outline :title "Twitter Friends List"
                    :text "Twitter Friends List")
-         (loop :for friend :in (chirp:friends/list :user-id (chirp:id user)) :do
+         (dolist (friend (chirp:friends/list :user-id (chirp:id user)))
            (who:htm
             (:outline
              :type "rss"

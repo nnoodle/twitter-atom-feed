@@ -2,9 +2,10 @@
 
 (in-package #:twitter-atom-feed-filters)
 
-(setf (symbol-function 'image-p) #'chirp:extended-entities)
-(setf (symbol-function 'retweet-p) #'chirp:retweet-p)
-(setf (symbol-function 'nsfw-p) #'chirp:possibly-sensitive)
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (setf (symbol-function 'image-p) #'chirp:extended-entities)
+  (setf (symbol-function 'retweet-p) #'chirp:retweet-p)
+  (setf (symbol-function 'nsfw-p) #'chirp:possibly-sensitive))
 
 ;;; a slightly less trivial example
 ;; (defun trigger-warning-p (tweet)

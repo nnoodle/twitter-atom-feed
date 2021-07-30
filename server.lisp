@@ -30,6 +30,11 @@
       (chirp:retweeted-status tweet)
       tweet))
 
+(defun pluck-video (video-info)
+  "Pluck the video with the highest bitrate"
+  (first (sort (cdr (assoc :variants video-info)) #'>
+               :key (lambda (v) (or (cdr (assoc :bitrate v)) 0)))))
+
 (defun write-atom-feed (tweets &key (stream *standard-output*) user)
   "Write an atom feed of all tweets to output."
   (let ((feed-id (format nil "~a:~a" +urn+ (if user (chirp:id user) "home")))
@@ -63,19 +68,28 @@
            ((:content :type "html")
             (who:str "<![CDATA[")
             (:p (who:str (chirp:text-with-markup tweet :text (chirp:full-text tweet))))
-            (when (chirp::extended-entities tweet)
+            (when (chirp:extended-entities tweet)
               (who:htm
-               (:p (loop :for img :in (cdar (chirp::extended-entities tweet))
+               (:p (loop :for img :in (cdar (chirp:extended-entities tweet))
                          ;; expanded-url is wrong
-                         :for photo :from 1 :to (length (cdar (chirp::extended-entities tweet)))
-                         :do (who:htm
-                              (:a :class "status-media"
-                                  :href (chirp:media-url-https img)
-                                  :title (format nil "https://twitter.com/~a/status/~a/photo/~a"
-                                                 (chirp:screen-name (chirp:user tweet))
-                                                 (chirp:id tweet)
-                                                 photo)
-                                  (:img :src (chirp:media-url-https img))))))))
+                         :for photo :from 1 :to (length (cdar (chirp:extended-entities tweet)))
+                         :do (if (chirp::video-info img)
+                                 (let ((who:*empty-attribute-syntax* t)
+                                       (video (pluck-video (chirp::video-info img))))
+                                   (who:htm ((:video :controls t :loop t :playsinline t
+                                                     :poster (chirp:media-url-https img))
+                                             (:source :src (cdr (assoc :url video))
+                                                      :type (cdr (assoc :content-type video))))
+                                            (:p ((:a :href (cdr (assoc :url video)))
+                                                 "Direct link to video."))))
+                                 (who:htm
+                                  (:a :class "status-media"
+                                      :href (chirp:media-url-https img)
+                                      :title (format nil "https://twitter.com/~a/status/~a/photo/~a"
+                                                     (chirp:screen-name (chirp:user tweet))
+                                                     (chirp:id tweet)
+                                                     photo)
+                                      (:img :src (chirp:media-url-https img)))))))))
             (:p (who:str (chirp:source tweet)))
             (who:str "]]>"))))))
       nil)))
@@ -106,12 +120,9 @@
                    (lambda (s) (string-trim " " s))
                    (delete-duplicates (split-sequence #\, filters :remove-empty-subseqs t)
                                       :test #'string-equal)))
-         (symbols
-           (with-package-iterator (next-symbol '(#:twitter-atom-feed-filters) :internal :external)
-             (loop :with more? :and symbol
-                   :do (setf (values more? symbol) (next-symbol))
-                   :while more?
-                   :collect symbol)))
+         (symbols (loop :for symbol :being :the :present-symbols
+                          :in '#:twitter-atom-feed-filters
+                        :collect symbol))
          (filters (reduce
                    (lambda (col symbol)
                      (cond ((find (symbol-name symbol) filters :test #'string-equal)
@@ -137,22 +148,31 @@
       (setf (hunchentoot:content-type*) "text/plain")
       (format nil "~s~%" (chirp:http-body err)))))
 
+(defun @eof-error (next)
+  (handler-case (funcall next)
+    (end-of-file (err)
+      (setf (hunchentoot:return-code*) 500)
+      (setf (hunchentoot:content-type*) "text/plain")
+      (format t "EOF ERROR ~s~%" err)
+      (format nil "~s~%" err))))
+
 (defun @atom (next)
   (setf (hunchentoot:content-type*) "application/atom+xml")
   (funcall next))
 
 (defmacro define-tweet-route (name path tweet-form &key user-form parameters)
-  "A very leaky macro."
+  "A very leaky abstraction."
   `(easy-routes:defroute ,name
-       (,path :decorators (@oauth-err @atom))
+       (,path :decorators (@oauth-err @eof-error @atom))
        (filters (count :init-form +default-count+ :parameter-type 'integer) ,@parameters)
      (with-output-to-string (stream)
        (write-atom-feed
-        (remove-if-not (compose-filters filters)
-                       (get-many-tweets #',(first tweet-form)
-                                        :count count
-                                        :tweet-mode "extended"
-                                        ,@(rest tweet-form)))
+        (setf (hunchentoot:aux-request-value :tweets)
+              (remove-if-not (compose-filters filters)
+                             (get-many-tweets #',(first tweet-form)
+                                              :count count
+                                              :tweet-mode "extended"
+                                              ,@(rest tweet-form))))
         :stream stream
         :user ,user-form))))
 
@@ -167,6 +187,16 @@
 
 (easy-routes:defroute favicon-route ("/favicon.ico") ()
   (hunchentoot:redirect "https://abs.twimg.com/favicons/twitter.ico"))
+
+(defmethod hunchentoot:acceptor-log-access ((acceptor hunchentoot:acceptor) &key return-code)
+  (hunchentoot::with-log-stream (stream (hunchentoot:acceptor-access-log-destination acceptor)
+                                        hunchentoot::*access-log-lock*)
+    (format stream "[~A]~@[ ~3D Tweets~] ~A~@[?~A~]~%"
+            (hunchentoot::iso-time)
+            (and (hunchentoot:aux-request-value :tweets)
+                 (length (hunchentoot:aux-request-value :tweets)))
+            (hunchentoot:script-name*)
+            (hunchentoot:query-string*))))
 
 (defun start-server (address port async)
   "Starts Atom feed web server at http://ADDRESS:PORT"
