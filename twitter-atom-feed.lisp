@@ -36,7 +36,7 @@
   (adopt:make-interface
    :name "twitter-atom-feed"
    :summary "Twitter Timeline → Atom Feed"
-   :usage "[-h|--help] [--opml] [-p|--port PORT] [-b|--bind ADDRESS]"
+   :usage "[-h|--help] [--opml] [-p|--port PORT] [-b|--bind ADDRESS] [--memoize]"
    :help "Turn Twitter timelines into Atom feeds, hosted on http://ADDRESS:PORT"
    :contents
    (list (adopt:make-option 'help
@@ -62,7 +62,13 @@
           :help "Specify alternate port (default: 8080)"
           :initial-value 8080
           :reduce #'adopt:last
-          :key #'parse-integer))))
+          :key #'parse-integer)
+         (adopt:make-option 'memoize
+          :long "memoize"
+          :help "Whether or not to memoize tweets. This is only useful
+          if twitter-atom-feed is ran as a short-lived process and if
+          feeds constantly fail."
+          :reduce (constantly t)))))
 
 (defun exit-on-signal (signo)
   (format *error-output* "~&received ~A~%" (trivial-signal:signal-name signo))
@@ -74,31 +80,35 @@
   (multiple-value-bind (_free-args opts)
       (handler-case (adopt:parse-options *ui*)
         (error (c) (adopt:print-error-and-exit c)))
+
+    (setf *address* (gethash 'bind opts)
+          *port* (gethash 'port opts)
+          *memoize-tweets-p* (gethash 'memoize opts))
+
     (cond ((gethash 'help opts) (adopt:print-help-and-exit *ui*))
           ((gethash 'opml opts)
-           (export-opml
-            :address (gethash 'bind opts)
-            :port (gethash 'port opts))
+           (export-opml :address *address*
+                        :port *port*)
            (uiop:quit 0))
           (t (trivial-signal:signal-handler-bind
                  ((3 #'exit-on-signal))
                (handler-case (bt:join-thread
                               (hunchentoot::acceptor-process
                                (hunchentoot::acceptor-taskmaster
-                                (start (gethash 'bind opts) (gethash 'port opts)))))
+                                (start))))
                  (usocket:unknown-error (_)
                    (uiop:quit 0))
                  (error (err)
-                   (format t "something happened: ~&~s~&" err)
+                   (format t "something happened: ~&~S~&" err)
                    (uiop:quit 1))))))))
 
-(defun start (&optional (address "localhost") (port 8080) async)
+(defun start (&key (address *address*) (port *port*) async)
   "Start atom feed server."
   (load-config)
   (authenticate)
   (start-server address port async))
 
-(defun export-opml (&key (address "localhost") (port 8080) (stream *standard-output*))
+(defun export-opml (&key (address *address*) (port *port*) (stream *standard-output*))
   "Export friends (accounts the user follows) list to stream"
   (let ((user (authenticate)))
     (who:with-html-output (stream nil :indent t :prologue "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")

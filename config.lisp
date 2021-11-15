@@ -2,6 +2,14 @@
 
 (in-package #:twitter-atom-feed)
 
+;;; CLI options
+
+(defvar *address* "localhost")
+(defvar *port* 8080)
+(defvar *memoize-tweets-p* nil)
+
+;;; filesystem
+
 (defvar *xdg-data* '()
   "Data from (read-data)")
 

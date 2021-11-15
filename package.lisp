@@ -3,7 +3,9 @@
 (defpackage #:twitter-atom-feed
   (:use #:cl)
   (:import-from #:split-sequence #:split-sequence)
-  (:import-from #:org.tfeb.hax.memoize #:def-memoized-function)
+  (:import-from #:org.tfeb.hax.memoize
+                #:def-memoized-function
+                #:memoize-function)
   (:export
    #:command-line
    #:start))

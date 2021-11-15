@@ -200,6 +200,13 @@
 
 (defun start-server (address port async)
   "Starts Atom feed web server at http://ADDRESS:PORT"
+  (when *memoize-tweets-p*
+    (memoize-function 'get-many-tweets
+                      :key (lambda (lst)
+                             (let ((args (cdr lst)))
+                               (or (getf args :screen-name)
+                                   (getf args :user-id))))
+                      :test #'equal))
   (setf *acceptor* (hunchentoot:start
                     (make-instance
                      'easy-routes:routes-acceptor
